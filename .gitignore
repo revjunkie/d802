@@ -64,6 +64,14 @@ include/linux/version.h
 include/generated
 arch/*/include/generated
 
+#
+# Lucid files
+#
+arch/arm/mach-msm/smd_rpc_sym.c
+comp
+lucid
+lucid_post_boot
+ini
 # stgit generated dirs
 patches-*
 

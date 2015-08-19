@@ -43,6 +43,14 @@
 #include "wcdcal-hwdep.h"
 
 
+#ifdef CONFIG_SND_SOC_ES325_SLIM
+/* LGE_BSP_AUDIO
+* include header for Audience eS325
+* 2013-01-10, jeremy.pi@lge.com
+*/
+#include <sound/es325-export.h>
+#endif /* CONFIG_SND_SOC_ES325_SLIM */
+
 #define TAIKO_MAD_SLIMBUS_TX_PORT 12
 #define TAIKO_MAD_AUDIO_FIRMWARE_PATH "wcd9320/wcd9320_mad_audio.bin"
 #define TAIKO_VALIDATE_RX_SBPORT_RANGE(port) ((port >= 16) && (port <= 22))
@@ -58,6 +66,11 @@
 #define TAIKO_WG_TIME_FACTOR_US	240
 
 static atomic_t kp_taiko_priv;
+
+#ifdef CONFIG_LGE_HEADSET_MIC_NOISE_WA
+static struct snd_soc_codec *taiko_codec_priv = NULL;
+#endif
+
 static int spkr_drv_wrnd_param_set(const char *val,
 				   const struct kernel_param *kp);
 static int spkr_drv_wrnd = 1;
@@ -1277,6 +1290,43 @@ static int taiko_mad_input_put(struct snd_kcontrol *kcontrol,
 
 static const struct snd_kcontrol_new taiko_snd_controls[] = {
 
+#if defined(CONFIG_MACH_LGE)
+	SOC_SINGLE_S8_TLV("RX1 Digital Volume", TAIKO_A_CDC_RX1_VOL_CTL_B2_CTL,
+		-60, 40, digital_gain),
+	SOC_SINGLE_S8_TLV("RX2 Digital Volume", TAIKO_A_CDC_RX2_VOL_CTL_B2_CTL,
+		-60, 40, digital_gain),
+	SOC_SINGLE_S8_TLV("RX3 Digital Volume", TAIKO_A_CDC_RX3_VOL_CTL_B2_CTL,
+		-60, 40, digital_gain),
+	SOC_SINGLE_S8_TLV("RX4 Digital Volume", TAIKO_A_CDC_RX4_VOL_CTL_B2_CTL,
+		-60, 40, digital_gain),
+	SOC_SINGLE_S8_TLV("RX5 Digital Volume", TAIKO_A_CDC_RX5_VOL_CTL_B2_CTL,
+		-60, 40, digital_gain),
+	SOC_SINGLE_S8_TLV("RX6 Digital Volume", TAIKO_A_CDC_RX6_VOL_CTL_B2_CTL,
+		-60, 40, digital_gain),
+	SOC_SINGLE_S8_TLV("RX7 Digital Volume", TAIKO_A_CDC_RX7_VOL_CTL_B2_CTL,
+		-60, 40, digital_gain),
+
+	SOC_SINGLE_S8_TLV("DEC1 Volume", TAIKO_A_CDC_TX1_VOL_CTL_GAIN, -60, 40,
+		digital_gain),
+	SOC_SINGLE_S8_TLV("DEC2 Volume", TAIKO_A_CDC_TX2_VOL_CTL_GAIN, -60, 40,
+		digital_gain),
+	SOC_SINGLE_S8_TLV("DEC3 Volume", TAIKO_A_CDC_TX3_VOL_CTL_GAIN, -60, 40,
+		digital_gain),
+	SOC_SINGLE_S8_TLV("DEC4 Volume", TAIKO_A_CDC_TX4_VOL_CTL_GAIN, -60, 40,
+		digital_gain),
+	SOC_SINGLE_S8_TLV("DEC5 Volume", TAIKO_A_CDC_TX5_VOL_CTL_GAIN, -60, 40,
+		digital_gain),
+	SOC_SINGLE_S8_TLV("DEC6 Volume", TAIKO_A_CDC_TX6_VOL_CTL_GAIN, -60, 40,
+		digital_gain),
+	SOC_SINGLE_S8_TLV("DEC7 Volume", TAIKO_A_CDC_TX7_VOL_CTL_GAIN, -60, 40,
+		digital_gain),
+	SOC_SINGLE_S8_TLV("DEC8 Volume", TAIKO_A_CDC_TX8_VOL_CTL_GAIN, -60, 40,
+		digital_gain),
+	SOC_SINGLE_S8_TLV("DEC9 Volume", TAIKO_A_CDC_TX9_VOL_CTL_GAIN, -60, 40,
+		digital_gain),
+	SOC_SINGLE_S8_TLV("DEC10 Volume", TAIKO_A_CDC_TX10_VOL_CTL_GAIN, -60,
+		40, digital_gain),
+#else
 	SOC_SINGLE_S8_TLV("RX1 Digital Volume", TAIKO_A_CDC_RX1_VOL_CTL_B2_CTL,
 		-84, 40, digital_gain),
 	SOC_SINGLE_S8_TLV("RX2 Digital Volume", TAIKO_A_CDC_RX2_VOL_CTL_B2_CTL,
@@ -1312,6 +1362,7 @@ static const struct snd_kcontrol_new taiko_snd_controls[] = {
 		digital_gain),
 	SOC_SINGLE_S8_TLV("DEC10 Volume", TAIKO_A_CDC_TX10_VOL_CTL_GAIN, -84,
 		40, digital_gain),
+#endif
 
 	SOC_SINGLE_S8_TLV("IIR1 INP1 Volume", TAIKO_A_CDC_IIR1_GAIN_B1_CTL, -84,
 		40, digital_gain),
@@ -3446,6 +3497,7 @@ static int taiko_codec_enable_anc(struct snd_soc_dapm_widget *w,
 			snd_soc_write(codec, reg, (old_val & ~mask) |
 				(val & mask));
 		}
+		release_firmware(fw);
 		if (!hwdep_cal)
 			release_firmware(fw);
 		break;
@@ -4939,6 +4991,77 @@ static int taiko_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
+#ifdef CONFIG_SND_SOC_ES325_SLIM
+/* LGE_BSP_AUDIO
+* funciotn overide for Audience eS325 ALSA SoC Audio driver
+* 2013-01-10, jeremy.pi@lge.com
+*/
+static int es325_hw_params(struct snd_pcm_substream *substream,
+		struct snd_pcm_hw_params *params,
+		struct snd_soc_dai *dai)
+{
+	int rc = 0;
+	pr_debug("%s: dai_name = %s DAI-ID %x rate %d num_ch %d\n", __func__,
+			dai->name, dai->id, params_rate(params),
+			params_channels(params));
+
+	rc = taiko_hw_params(substream, params, dai);
+	if (es325_remote_route_enable(dai))
+		rc = es325_slim_hw_params(substream, params, dai);
+	return rc;
+}
+/*
+static int es325_set_channel_map(struct snd_soc_dai *dai,
+				unsigned int tx_num, unsigned int *tx_slot,
+				unsigned int rx_num, unsigned int *rx_slot)
+
+{
+	unsigned int taiko_tx_num = 0;
+	unsigned int taiko_tx_slot[6];
+	unsigned int taiko_rx_num = 0;
+	unsigned int taiko_rx_slot[6];
+	int rc = 0;
+	pr_info("%s(): dai_name = %s DAI-ID %x tx_ch %d rx_ch %d\n",
+			__func__, dai->name, dai->id, tx_num, rx_num);
+
+	if (es325_remote_route_enable(dai)) {
+		rc = taiko_get_channel_map(dai, &taiko_tx_num, taiko_tx_slot,
+					&taiko_rx_num, taiko_rx_slot);
+		rc = taiko_set_channel_map(dai, tx_num, taiko_tx_slot, rx_num, taiko_rx_slot);
+		rc = es325_slim_set_channel_map(dai, tx_num, tx_slot, rx_num, rx_slot);
+	}
+	else
+		rc = taiko_set_channel_map(dai, tx_num, tx_slot, rx_num, rx_slot);
+
+	return rc;
+}
+*/
+static int es325_get_channel_map(struct snd_soc_dai *dai,
+				unsigned int *tx_num, unsigned int *tx_slot,
+				unsigned int *rx_num, unsigned int *rx_slot)
+
+{
+	int rc = 0;
+	pr_debug("%s(): dai_name = %s DAI-ID %d tx_ch %d rx_ch %d\n",
+			__func__, dai->name, dai->id, *tx_num, *rx_num);
+
+	if (es325_remote_route_enable(dai))
+		rc = es325_slim_get_channel_map(dai, tx_num, tx_slot, rx_num, rx_slot);
+	else
+		rc = taiko_get_channel_map(dai, tx_num, tx_slot, rx_num, rx_slot);
+
+	return rc;
+}
+static struct snd_soc_dai_ops taiko_dai_ops = {
+	.startup = taiko_startup,
+	.shutdown = taiko_shutdown,
+	.hw_params = es325_hw_params,
+	.set_sysclk = taiko_set_dai_sysclk,
+	.set_fmt = taiko_set_dai_fmt,
+	.set_channel_map = taiko_set_channel_map,
+	.get_channel_map = es325_get_channel_map,
+};
+#else  /* CONFIG_SND_SOC_ES325_SLIM */
 static struct snd_soc_dai_ops taiko_dai_ops = {
 	.startup = taiko_startup,
 	.shutdown = taiko_shutdown,
@@ -4948,6 +5071,7 @@ static struct snd_soc_dai_ops taiko_dai_ops = {
 	.set_channel_map = taiko_set_channel_map,
 	.get_channel_map = taiko_get_channel_map,
 };
+#endif /* CONFIG_SND_SOC_ES325_SLIM */
 
 static struct snd_soc_dai_driver taiko_dai[] = {
 	{
@@ -5226,8 +5350,22 @@ static int taiko_codec_enable_slimrx(struct snd_soc_dapm_widget *w,
 		ret = wcd9xxx_cfg_slim_sch_rx(core, &dai->wcd9xxx_ch_list,
 					      dai->rate, dai->bit_width,
 					      &dai->grph);
+#ifdef CONFIG_SND_SOC_ES325_SLIM
+		/* LGE_BSP_AUDIO
+		* configurated to enable slim rx of Audience eS325
+		* 2013-01-10, jeremy.pi@lge.com
+		*/
+		ret = es325_remote_cfg_slim_rx(taiko_dai[w->shift].id);
+#endif /* CONFIG_SND_SOC_ES325_SLIM */
 		break;
 	case SND_SOC_DAPM_POST_PMD:
+#ifdef CONFIG_SND_SOC_ES325_SLIM
+		/* LGE_BSP_AUDIO
+		* configurated to disable slim rx of Audience eS325
+		* 2013-01-10, jeremy.pi@lge.com
+		*/
+		ret = es325_remote_close_slim_rx(taiko_dai[w->shift].id);
+#endif /* CONFIG_SND_SOC_ES325_SLIM */
 		ret = wcd9xxx_close_slim_sch_rx(core, &dai->wcd9xxx_ch_list,
 						dai->grph);
 		if (!dai->bus_down_in_recovery)
@@ -5356,8 +5494,22 @@ static int taiko_codec_enable_slimtx(struct snd_soc_dapm_widget *w,
 		ret = wcd9xxx_cfg_slim_sch_tx(core, &dai->wcd9xxx_ch_list,
 					      dai->rate, dai->bit_width,
 					      &dai->grph);
+#ifdef CONFIG_SND_SOC_ES325_SLIM
+		/* LGE_BSP_AUDIO
+		* configurated to enable slim tx of Audience eS325
+		* 2013-01-10, jeremy.pi@lge.com
+		*/
+		ret = es325_remote_cfg_slim_tx(taiko_dai[w->shift].id);
+#endif /* CONFIG_SND_SOC_ES325_SLIM */
 		break;
 	case SND_SOC_DAPM_POST_PMD:
+#ifdef CONFIG_SND_SOC_ES325_SLIM
+		/* LGE_BSP_AUDIO
+		* configurated to disable slim tx of Audience eS325
+		* 2013-01-10, jeremy.pi@lge.com
+		*/
+		ret = es325_remote_close_slim_tx(taiko_dai[w->shift].id);
+#endif /* CONFIG_SND_SOC_ES325_SLIM */
 		ret = wcd9xxx_close_slim_sch_tx(core, &dai->wcd9xxx_ch_list,
 						dai->grph);
 		if (!dai->bus_down_in_recovery)
@@ -6405,7 +6557,7 @@ static const struct wcd9xxx_reg_mask_val taiko_reg_defaults[] = {
 	TAIKO_REG_VAL(TAIKO_A_CDC_CONN_MAD, 0x01),
 
 	/* Set HPH Path to low power mode */
-	TAIKO_REG_VAL(TAIKO_A_RX_HPH_BIAS_PA, 0x55),
+	TAIKO_REG_VAL(TAIKO_A_RX_HPH_BIAS_PA, 0x7a),
 
 	/* BUCK default */
 	TAIKO_REG_VAL(WCD9XXX_A_BUCK_CTRL_CCL_4, 0x51),
@@ -6448,8 +6600,11 @@ static const struct wcd9xxx_reg_mask_val taiko_1_0_reg_defaults[] = {
 
 	/* Disable TX7 internal biasing path which can cause leakage */
 	TAIKO_REG_VAL(TAIKO_A_TX_SUP_SWITCH_CTRL_1, 0xBF),
+
+#ifndef CONFIG_MACH_LGE
 	/* Enable MICB 4 VDDIO switch to prevent leakage */
 	TAIKO_REG_VAL(TAIKO_A_MICB_4_MBHC, 0x81),
+#endif
 
 	/* Close leakage on the spkdrv */
 	TAIKO_REG_VAL(TAIKO_A_SPKR_DRV_DBG_PWRSTG, 0x24),
@@ -6474,7 +6629,11 @@ static const struct wcd9xxx_reg_mask_val taiko_2_0_reg_defaults[] = {
 	TAIKO_REG_VAL(TAIKO_A_BUCK_CTRL_CCL_4, 0x51),
 	TAIKO_REG_VAL(TAIKO_A_NCP_DTEST, 0x10),
 	TAIKO_REG_VAL(TAIKO_A_RX_HPH_CHOP_CTL, 0xA4),
+#if defined(CONFIG_SWITCH_MAX1462X)|| defined(CONFIG_INPUT_MAX14688)
+	TAIKO_REG_VAL(TAIKO_A_RX_HPH_OCP_CTL, 0x6b),
+#else
 	TAIKO_REG_VAL(TAIKO_A_RX_HPH_OCP_CTL, 0x69),
+#endif
 	TAIKO_REG_VAL(TAIKO_A_RX_HPH_CNP_WG_CTL, 0xDA),
 	TAIKO_REG_VAL(TAIKO_A_RX_HPH_CNP_WG_TIME, 0x15),
 	TAIKO_REG_VAL(TAIKO_A_RX_EAR_BIAS_PA, 0x76),
@@ -6589,6 +6748,12 @@ static const struct wcd9xxx_reg_mask_val taiko_codec_reg_init_val[] = {
 	{TAIKO_A_CDC_COMP0_B5_CTL, 0x7F, 0x7F},
 	{TAIKO_A_CDC_COMP1_B5_CTL, 0x7F, 0x7F},
 	{TAIKO_A_CDC_COMP2_B5_CTL, 0x7F, 0x7F},
+
+	/* Set the MICBIAS default output as pull down*/
+	{TAIKO_A_MICB_1_CTL, 0x01, 0x01},
+	{TAIKO_A_MICB_2_CTL, 0x01, 0x01},
+	{TAIKO_A_MICB_3_CTL, 0x01, 0x01},
+	{TAIKO_A_MICB_4_CTL, 0x01, 0x01},
 
 	/*
 	 * Setup wavegen timer to 20msec and disable chopper
@@ -7145,6 +7310,24 @@ static struct regulator *taiko_codec_find_regulator(struct snd_soc_codec *codec,
 	return NULL;
 }
 
+#ifdef CONFIG_LGE_HEADSET_MIC_NOISE_WA
+void taiko_dec5_vol_mute(void)
+{
+       u16 tx_vol_ctl_reg;
+       s8 decimator = 5; /* DEC5 */
+
+       if(taiko_codec_priv == NULL)
+       {
+	pr_debug("%s: codec not initialized yet, return.\n", __func__);
+	return;
+       }
+       tx_vol_ctl_reg = TAIKO_A_CDC_TX1_VOL_CTL_CFG + 8 * (decimator - 1);
+       pr_info("%s: tx_vol_ctl_reg(%#x):0x01\n", __func__, tx_vol_ctl_reg);
+       snd_soc_update_bits(taiko_codec_priv, tx_vol_ctl_reg, 0x01, 0x01);
+}
+EXPORT_SYMBOL(taiko_dec5_vol_mute);
+#endif
+
 static int taiko_codec_probe(struct snd_soc_codec *codec)
 {
 	struct wcd9xxx *control;
@@ -7157,7 +7340,9 @@ static int taiko_codec_probe(struct snd_soc_codec *codec)
 	void *ptr = NULL;
 	struct wcd9xxx *core = dev_get_drvdata(codec->dev->parent);
 	struct wcd9xxx_core_resource *core_res;
-
+#ifdef CONFIG_LGE_HEADSET_MIC_NOISE_WA
+	taiko_codec_priv = codec;
+#endif
 	codec->control_data = dev_get_drvdata(codec->dev->parent);
 	control = codec->control_data;
 
@@ -7201,6 +7386,19 @@ static int taiko_codec_probe(struct snd_soc_codec *codec)
 		rco_clk_rate = TAIKO_MCLK_CLK_12P288MHZ;
 	else
 		rco_clk_rate = TAIKO_MCLK_CLK_9P6MHZ;
+
+#ifdef CONFIG_ENABLE_MBHC
+	/* init and start mbhc */
+	ret = wcd9xxx_mbhc_init(&taiko->mbhc, &taiko->resmgr, codec,
+				taiko_enable_mbhc_micbias,
+				&mbhc_cb, &cdc_intr_ids,
+				rco_clk_rate, true);
+	if (ret) {
+		pr_err("%s: mbhc init failed %d\n", __func__, ret);
+		goto err_hwdep;
+	}
+#endif  // CONFIG_ENABLE_MBHC
+
 	taiko->fw_data = kzalloc(sizeof(*(taiko->fw_data)), GFP_KERNEL);
 	if (!taiko->fw_data) {
 		dev_err(codec->dev, "Failed to allocate fw_data\n");
@@ -7213,15 +7411,6 @@ static int taiko_codec_probe(struct snd_soc_codec *codec)
 					WCD9XXX_CODEC_HWDEP_NODE, codec);
 	if (ret < 0) {
 		dev_err(codec->dev, "%s hwdep failed %d\n", __func__, ret);
-		goto err_hwdep;
-	}
-	/* init and start mbhc */
-	ret = wcd9xxx_mbhc_init(&taiko->mbhc, &taiko->resmgr, codec,
-				taiko_enable_mbhc_micbias,
-				&mbhc_cb, &cdc_intr_ids,
-				rco_clk_rate, true);
-	if (ret) {
-		pr_err("%s: mbhc init failed %d\n", __func__, ret);
 		goto err_hwdep;
 	}
 
@@ -7266,6 +7455,14 @@ static int taiko_codec_probe(struct snd_soc_codec *codec)
 		ret = -ENOMEM;
 		goto err_hwdep;
 	}
+
+#ifdef CONFIG_SND_SOC_ES325_SLIM
+	/* LGE_BSP_AUDIO
+	* add codec control for Audience eS325
+	* 2013-01-10, jeremy.pi@lge.com
+	*/
+	es325_remote_add_codec_controls(codec);
+#endif /* CONFIG_SND_SOC_ES325_SLIM */
 
 	if (taiko->intf_type == WCD9XXX_INTERFACE_TYPE_I2C) {
 		snd_soc_dapm_new_controls(dapm, taiko_dapm_i2s_widgets,
@@ -7363,8 +7560,11 @@ static int taiko_codec_remove(struct snd_soc_codec *codec)
 
 	taiko_cleanup_irqs(taiko);
 
+#ifdef CONFIG_ENABLE_MBHC
 	/* cleanup MBHC */
 	wcd9xxx_mbhc_deinit(&taiko->mbhc);
+#endif // CONFIG_ENABLE_MBHC
+
 	/* cleanup resmgr */
 	wcd9xxx_resmgr_deinit(&taiko->resmgr);
 

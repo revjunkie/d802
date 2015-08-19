@@ -34,7 +34,11 @@
 #define PHASE_STEP_SHIFT	21
 #define MAX_MIXER_WIDTH		2048
 #define MAX_LINE_BUFFER_WIDTH	2048
+#if defined(CONFIG_MACH_LGE)
+#define MAX_MIXER_HEIGHT	2560
+#else
 #define MAX_MIXER_HEIGHT	0xFFFF
+#endif
 #define MAX_IMG_WIDTH		0x3FFF
 #define MAX_IMG_HEIGHT		0x3FFF
 #define MAX_DST_W		MAX_MIXER_WIDTH
@@ -79,6 +83,10 @@ static inline u32 mdss_mdp_reg_read(u32 addr)
 #endif
 #define PERF_STATUS_DONE 0
 #define PERF_STATUS_BUSY 1
+
+#if defined(CONFIG_MACH_MSM8974_G3) || defined(CONFIG_MACH_MSM8974_DZNY)
+#define VIDEO_PLAYBACK_AB_1_1_G3
+#endif
 
 enum mdss_mdp_perf_state_type {
 	PERF_SW_COMMIT_STATE = 0,
@@ -154,12 +162,23 @@ enum mdss_mdp_wb_ctl_type {
 	MDSS_MDP_WB_CTL_TYPE_LINE
 };
 
+#ifdef VIDEO_PLAYBACK_AB_1_1_G3
+enum mdss_mdp_bw_vote_mode {
+    MDSS_MDP_BW_MODE_NONE = 0,
+    MDSS_MDP_BW_MODE_VIDEO = BIT(0),
+    MDSS_MDP_BW_MODE_MAX
+};
+#endif
+
 struct mdss_mdp_perf_params {
 	u64 bw_overlap;
 	u64 bw_prefill;
 	u32 prefill_bytes;
 	u64 bw_ctl;
 	u32 mdp_clk_rate;
+#ifdef VIDEO_PLAYBACK_AB_1_1_G3
+	u32 bw_vote_mode;
+#endif
 };
 
 struct mdss_mdp_ctl {
@@ -227,7 +246,6 @@ struct mdss_mdp_ctl {
 
 	void *priv_data;
 	u32 wb_type;
-	u64 bw_pending;
 };
 
 struct mdss_mdp_mixer {
@@ -280,7 +298,6 @@ struct mdss_mdp_img_data {
 	u32 len;
 	u32 flags;
 	int p_need;
-	bool mapped;
 	struct file *srcp_file;
 	struct ion_handle *srcp_ihdl;
 };
@@ -332,6 +349,7 @@ struct mdss_ad_info {
 	u32 last_bl;
 	u32 bl_data;
 	u32 calc_itr;
+	uint32_t bl_bright_shift;
 	uint32_t bl_lin[AD_BL_LIN_LEN];
 	uint32_t bl_lin_inv[AD_BL_LIN_LEN];
 	uint32_t bl_att_lut[AD_BL_ATT_LUT_LEN];
@@ -440,7 +458,7 @@ struct mdss_overlay_private {
 
 	struct mdss_data_type *mdata;
 	struct mutex ov_lock;
-        struct mutex dfps_lock;
+	struct mutex dfps_lock;
 	struct mdss_mdp_ctl *ctl;
 	struct mdss_mdp_wb *wb;
 
@@ -464,6 +482,9 @@ struct mdss_overlay_private {
 	struct mdss_mdp_vsync_handler vsync_retire_handler;
 	struct work_struct retire_work;
 	int retire_cnt;
+#ifdef MDP_BW_LIMIT_AB
+	bool bw_limit;
+#endif
 };
 
 /**
@@ -521,15 +542,6 @@ static inline int mdss_mdp_line_buffer_width(void)
 	return MAX_LINE_BUFFER_WIDTH;
 }
 
-static inline void mdss_update_sd_client(struct mdss_data_type *mdata,
-							bool status)
-{
-	if (status)
-		atomic_inc(&mdata->sd_client_count);
-	else
-		atomic_add_unless(&mdss_res->sd_client_count, -1, 0);
-}
-
 irqreturn_t mdss_mdp_isr(int irq, void *ptr);
 int mdss_iommu_attach(struct mdss_data_type *mdata);
 int mdss_iommu_dettach(struct mdss_data_type *mdata);
@@ -552,7 +564,6 @@ unsigned long mdss_mdp_get_clk_rate(u32 clk_idx);
 int mdss_mdp_vsync_clk_enable(int enable);
 void mdss_mdp_clk_ctrl(int enable, int isr);
 struct mdss_data_type *mdss_mdp_get_mdata(void);
-int mdss_mdp_secure_display_ctrl(unsigned int enable);
 
 int mdss_mdp_overlay_init(struct msm_fb_data_type *mfd);
 int mdss_mdp_overlay_req_check(struct msm_fb_data_type *mfd,
@@ -633,7 +644,6 @@ int mdss_mdp_csc_setup_data(u32 block, u32 blk_idx, u32 tbl_idx,
 
 int mdss_mdp_pp_init(struct device *dev);
 void mdss_mdp_pp_term(struct device *dev);
-int mdss_mdp_pp_overlay_init(struct msm_fb_data_type *mfd);
 
 int mdss_mdp_pp_resume(struct mdss_mdp_ctl *ctl, u32 mixer_num);
 
@@ -728,6 +738,9 @@ int mdss_mdp_wb_ioctl_handler(struct msm_fb_data_type *mfd, u32 cmd, void *arg);
 int mdss_mdp_get_ctl_mixers(u32 fb_num, u32 *mixer_id);
 u32 mdss_mdp_fb_stride(u32 fb_index, u32 xres, int bpp);
 void mdss_check_dsi_ctrl_status(struct work_struct *work, uint32_t interval);
+#ifdef CONFIG_MACH_LGE
+int mdss_dsi_panel_invert(u32 enable);
+#endif
 
 int mdss_panel_register_done(struct mdss_panel_data *pdata);
 int mdss_mdp_limited_lut_igc_config(struct mdss_mdp_ctl *ctl);

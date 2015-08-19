@@ -269,6 +269,7 @@ static DEFINE_MUTEX(smsm_cb_lock);
 static DEFINE_MUTEX(delayed_ul_vote_lock);
 static int need_delayed_ul_vote;
 static int power_management_only_mode;
+static int in_ssr;
 static int ssr_skipped_disconnect;
 static struct completion shutdown_completion;
 
@@ -440,6 +441,8 @@ static void __queue_rx(gfp_t alloc_flags)
 			mutex_unlock(&bam_rx_pool_mutexlock);
 			DMUX_LOG_KERR("%s: sps_transfer_one failed %d\n",
 				__func__, ret);
+			if (bam_connection_is_active)
+				panic("forced crash\n");
 
 			dma_unmap_single(NULL, info->dma_address, BUFFER_SIZE,
 						bam_ops->dma_from);
@@ -675,6 +678,7 @@ static int bam_mux_write_cmd(void *data, uint32_t len)
 	if (rc) {
 		DMUX_LOG_KERR("%s sps_transfer_one failed rc=%d\n",
 			__func__, rc);
+		panic("forced crash\n");
 		list_del(&pkt->list_node);
 		DBG_INC_TX_SPS_FAILURE_CNT();
 		spin_unlock_irqrestore(&bam_tx_pool_spinlock, flags);
@@ -860,6 +864,7 @@ int msm_bam_dmux_write(uint32_t id, struct sk_buff *skb)
 	if (rc) {
 		DMUX_LOG_KERR("%s sps_transfer_one failed rc=%d\n",
 			__func__, rc);
+		panic("forced crash\n");
 		list_del(&pkt->list_node);
 		DBG_INC_TX_SPS_FAILURE_CNT();
 		spin_unlock_irqrestore(&bam_tx_pool_spinlock, flags);
@@ -1077,6 +1082,7 @@ static void rx_switch_to_interrupt_mode(void)
 	ret = bam_ops->sps_get_config_ptr(bam_rx_pipe, &cur_rx_conn);
 	if (ret) {
 		pr_err("%s: sps_get_config() failed %d\n", __func__, ret);
+		panic("forced crash\n");
 		goto fail;
 	}
 
@@ -1084,6 +1090,7 @@ static void rx_switch_to_interrupt_mode(void)
 	ret = bam_ops->sps_register_event_ptr(bam_rx_pipe, &rx_register_event);
 	if (ret) {
 		pr_err("%s: sps_register_event() failed %d\n", __func__, ret);
+		panic("forced crash\n");
 		goto fail;
 	}
 
@@ -1092,6 +1099,7 @@ static void rx_switch_to_interrupt_mode(void)
 	ret = bam_ops->sps_set_config_ptr(bam_rx_pipe, &cur_rx_conn);
 	if (ret) {
 		pr_err("%s: sps_set_config() failed %d\n", __func__, ret);
+		panic("forced crash\n");
 		goto fail;
 	}
 	polling_mode = 0;
@@ -1104,6 +1112,7 @@ static void rx_switch_to_interrupt_mode(void)
 		if (ret) {
 			pr_err("%s: sps_get_iovec failed %d\n",
 					__func__, ret);
+			panic("forced crash\n");
 			break;
 		}
 		if (iov.addr == 0)
@@ -1189,6 +1198,7 @@ static void rx_timer_work_func(struct work_struct *work)
 			if (ret) {
 				DMUX_LOG_KERR("%s: sps_get_iovec failed %d\n",
 						__func__, ret);
+				panic("forced crash\n");
 				break;
 			}
 			if (iov.addr == 0)
@@ -1318,6 +1328,7 @@ static void bam_mux_rx_notify(struct sps_event_notify *notify)
 			if (ret) {
 				pr_err("%s: sps_get_config() failed %d, interrupts"
 					" not disabled\n", __func__, ret);
+				panic("forced crash\n");
 				break;
 			}
 			cur_rx_conn.options = SPS_O_AUTO_ENABLE |
@@ -1327,6 +1338,7 @@ static void bam_mux_rx_notify(struct sps_event_notify *notify)
 			if (ret) {
 				pr_err("%s: sps_set_config() failed %d, interrupts"
 					" not disabled\n", __func__, ret);
+				panic("forced crash\n");
 				break;
 			}
 			INIT_COMPLETION(shutdown_completion);
@@ -1770,11 +1782,8 @@ static void reconnect_to_bam(void)
 {
 	int i;
 
-	if (in_global_reset) {
-		BAM_DMUX_LOG("%s: skipping due to SSR\n", __func__);
-		return;
-	}
-
+	in_global_reset = 0;
+	in_ssr = 0;
 	vote_dfab();
 	if (!power_management_only_mode) {
 		if (ssr_skipped_disconnect) {
@@ -1786,27 +1795,37 @@ static void reconnect_to_bam(void)
 		}
 		ssr_skipped_disconnect = 0;
 		i = bam_ops->sps_device_reset_ptr(a2_device_handle);
-		if (i)
+		if (i) {
 			pr_err("%s: device reset failed rc = %d\n", __func__,
 									i);
+			panic("forced crash\n");
+		}
 		i = bam_ops->sps_connect_ptr(bam_tx_pipe, &tx_connection);
-		if (i)
+		if (i) {
 			pr_err("%s: tx connection failed rc = %d\n", __func__,
 									i);
+			panic("forced crash\n");
+		}
 		i = bam_ops->sps_connect_ptr(bam_rx_pipe, &rx_connection);
-		if (i)
+		if (i) {
 			pr_err("%s: rx connection failed rc = %d\n", __func__,
 									i);
+			panic("forced crash\n");
+		}
 		i = bam_ops->sps_register_event_ptr(bam_tx_pipe,
 				&tx_register_event);
-		if (i)
+		if (i) {
 			pr_err("%s: tx event reg failed rc = %d\n", __func__,
 									i);
+			panic("forced crash\n");
+		}
 		i = bam_ops->sps_register_event_ptr(bam_rx_pipe,
 				&rx_register_event);
-		if (i)
+		if (i) {
 			pr_err("%s: rx event reg failed rc = %d\n", __func__,
 									i);
+			panic("forced crash\n");
+		}
 	}
 
 	bam_connection_is_active = 1;
@@ -1853,9 +1872,9 @@ static void disconnect_to_bam(void)
 	/* tear down BAM connection */
 	INIT_COMPLETION(bam_connection_completion);
 
-	/* documentation/assumptions found in restart_notifier_cb */
+	/* in_ssr documentation/assumptions found in restart_notifier_cb */
 	if (!power_management_only_mode) {
-		if (likely(!in_global_reset)) {
+		if (likely(!in_ssr)) {
 			BAM_DMUX_LOG("%s: disconnect tx\n", __func__);
 			bam_ops->sps_disconnect_ptr(bam_tx_pipe);
 			BAM_DMUX_LOG("%s: disconnect rx\n", __func__);
@@ -1993,13 +2012,12 @@ static int restart_notifier_cb(struct notifier_block *this,
 	if (code == SUBSYS_BEFORE_SHUTDOWN) {
 		BAM_DMUX_LOG("%s: begin\n", __func__);
 		in_global_reset = 1;
-		/* sync to ensure the driver sees SSR */
+		in_ssr = 1;
+		/* wait till all bam_dmux writes completes */
 		synchronize_srcu(&bam_dmux_srcu);
 		BAM_DMUX_LOG("%s: ssr signaling complete\n", __func__);
 		flush_workqueue(bam_mux_rx_workqueue);
 	}
-	if (code == SUBSYS_BEFORE_POWERUP)
-		in_global_reset = 0;
 	if (code != SUBSYS_AFTER_SHUTDOWN)
 		return NOTIFY_DONE;
 
@@ -2071,6 +2089,7 @@ static int bam_init(void)
 	int skip_iounmap = 0;
 
 	in_global_reset = 0;
+	in_ssr = 0;
 	vote_dfab();
 	/* init BAM */
 	a2_virt_addr = ioremap_nocache((unsigned long)(a2_phys_base),
@@ -2095,6 +2114,7 @@ static int bam_init(void)
 	ret = bam_ops->sps_register_bam_device_ptr(&a2_props, &h);
 	if (ret < 0) {
 		pr_err("%s: register bam error %d\n", __func__, ret);
+		panic("forced crash\n");
 		goto register_bam_failed;
 	}
 	a2_device_handle = h;
@@ -2102,12 +2122,14 @@ static int bam_init(void)
 	bam_tx_pipe = bam_ops->sps_alloc_endpoint_ptr();
 	if (bam_tx_pipe == NULL) {
 		pr_err("%s: tx alloc endpoint failed\n", __func__);
+		panic("forced crash\n");
 		ret = -ENOMEM;
 		goto tx_alloc_endpoint_failed;
 	}
 	ret = bam_ops->sps_get_config_ptr(bam_tx_pipe, &tx_connection);
 	if (ret) {
 		pr_err("%s: tx get config failed %d\n", __func__, ret);
+		panic("forced crash\n");
 		goto tx_get_config_failed;
 	}
 
@@ -2133,18 +2155,21 @@ static int bam_init(void)
 	ret = bam_ops->sps_connect_ptr(bam_tx_pipe, &tx_connection);
 	if (ret < 0) {
 		pr_err("%s: tx connect error %d\n", __func__, ret);
+		panic("forced crash\n");
 		goto tx_connect_failed;
 	}
 
 	bam_rx_pipe = bam_ops->sps_alloc_endpoint_ptr();
 	if (bam_rx_pipe == NULL) {
 		pr_err("%s: rx alloc endpoint failed\n", __func__);
+		panic("forced crash\n");
 		ret = -ENOMEM;
 		goto rx_alloc_endpoint_failed;
 	}
 	ret = bam_ops->sps_get_config_ptr(bam_rx_pipe, &rx_connection);
 	if (ret) {
 		pr_err("%s: rx get config failed %d\n", __func__, ret);
+		panic("forced crash\n");
 		goto rx_get_config_failed;
 	}
 
@@ -2171,6 +2196,7 @@ static int bam_init(void)
 	ret = bam_ops->sps_connect_ptr(bam_rx_pipe, &rx_connection);
 	if (ret < 0) {
 		pr_err("%s: rx connect error %d\n", __func__, ret);
+		panic("forced crash\n");
 		goto rx_connect_failed;
 	}
 
@@ -2182,6 +2208,7 @@ static int bam_init(void)
 	ret = bam_ops->sps_register_event_ptr(bam_tx_pipe, &tx_register_event);
 	if (ret < 0) {
 		pr_err("%s: tx register event error %d\n", __func__, ret);
+		panic("forced crash\n");
 		goto rx_event_reg_failed;
 	}
 
@@ -2193,6 +2220,7 @@ static int bam_init(void)
 	ret = bam_ops->sps_register_event_ptr(bam_rx_pipe, &rx_register_event);
 	if (ret < 0) {
 		pr_err("%s: tx register event error %d\n", __func__, ret);
+		panic("forced crash\n");
 		goto rx_event_reg_failed;
 	}
 
@@ -2325,9 +2353,7 @@ static void toggle_apps_ack(void)
 static void bam_dmux_smsm_cb(void *priv, uint32_t old_state, uint32_t new_state)
 {
 	static int last_processed_state;
-	int rcu_id;
 
-	rcu_id = srcu_read_lock(&bam_dmux_srcu);
 	mutex_lock(&smsm_cb_lock);
 	bam_dmux_power_state = new_state & SMSM_A2_POWER_CONTROL ? 1 : 0;
 	DBG_INC_A2_POWER_CONTROL_IN_CNT();
@@ -2336,7 +2362,6 @@ static void bam_dmux_smsm_cb(void *priv, uint32_t old_state, uint32_t new_state)
 	if (last_processed_state == (new_state & SMSM_A2_POWER_CONTROL)) {
 		BAM_DMUX_LOG("%s: already processed this state\n", __func__);
 		mutex_unlock(&smsm_cb_lock);
-		srcu_read_unlock(&bam_dmux_srcu, rcu_id);
 		return;
 	}
 
@@ -2363,20 +2388,16 @@ static void bam_dmux_smsm_cb(void *priv, uint32_t old_state, uint32_t new_state)
 		pr_err("%s: unsupported state change\n", __func__);
 	}
 	mutex_unlock(&smsm_cb_lock);
-	srcu_read_unlock(&bam_dmux_srcu, rcu_id);
+
 }
 
 static void bam_dmux_smsm_ack_cb(void *priv, uint32_t old_state,
 						uint32_t new_state)
 {
-	int rcu_id;
-
-	rcu_id = srcu_read_lock(&bam_dmux_srcu);
 	DBG_INC_ACK_IN_CNT();
 	BAM_DMUX_LOG("%s: 0x%08x -> 0x%08x\n", __func__, old_state,
 			new_state);
 	complete_all(&ul_wakeup_ack_completion);
-	srcu_read_unlock(&bam_dmux_srcu, rcu_id);
 }
 
 /**
@@ -2405,9 +2426,6 @@ void msm_bam_dmux_deinit(void)
 {
 	restart_notifier_cb(NULL, SUBSYS_BEFORE_SHUTDOWN, NULL);
 	restart_notifier_cb(NULL, SUBSYS_AFTER_SHUTDOWN, NULL);
-	restart_notifier_cb(NULL, SUBSYS_BEFORE_POWERUP, NULL);
-	restart_notifier_cb(NULL, SUBSYS_AFTER_POWERUP, NULL);
-	in_global_reset = 0;
 }
 EXPORT_SYMBOL(msm_bam_dmux_deinit);
 

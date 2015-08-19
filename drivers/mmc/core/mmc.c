@@ -126,7 +126,19 @@ static int mmc_decode_cid(struct mmc_card *card)
 		card->cid.prod_name[5]	= UNSTUFF_BITS(resp, 56, 8);
 		card->cid.serial	= UNSTUFF_BITS(resp, 16, 32);
 		card->cid.month		= UNSTUFF_BITS(resp, 12, 4);
-		card->cid.year		= UNSTUFF_BITS(resp, 8, 4) + 1997;
+#ifdef CONFIG_MACH_LGE
+		/* LGE_CHANGE
+		 * modify date cid register values
+		 * see CID register part in JEDEC Spec.
+		 * ex) 0000 : 1997, or 2013 if EXT_CSD_REV [192] > 4
+		 * don't care MDT y Field[11:8] value over 1101b.
+		 * 2014-03-07, B2-BSP-FS@lge.com
+		 */
+		if (card->ext_csd.rev > 4)
+			card->cid.year		= UNSTUFF_BITS(resp, 8, 4) + 2013;
+		else
+#endif
+		card->cid.year      = UNSTUFF_BITS(resp, 8, 4) + 1997;
 		break;
 
 	default:
@@ -620,6 +632,12 @@ static int mmc_compare_ext_csds(struct mmc_card *card, unsigned bus_width)
 	err = mmc_get_ext_csd(card, &bw_ext_csd);
 
 	if (err || bw_ext_csd == NULL) {
+		#ifdef CONFIG_MACH_LGE
+		/* LGE_CHANGE, 2013-04-19, G2-FS@lge.com
+		* Adding Print, Requested by QMC-CASE-01158823
+		*/
+		pr_err("%s: %s: 0x%x, 0x%x\n", mmc_hostname(card->host), __func__, err, bw_ext_csd ? *bw_ext_csd : 0x0);
+		#endif
 		if (bus_width != MMC_BUS_WIDTH_1)
 			err = -EINVAL;
 		goto out;
@@ -663,14 +681,27 @@ static int mmc_compare_ext_csds(struct mmc_card *card, unsigned bus_width)
 			bw_ext_csd[EXT_CSD_SEC_CNT + 2]) &&
 		(card->ext_csd.raw_sectors[3] ==
 			bw_ext_csd[EXT_CSD_SEC_CNT + 3]));
+
+	#ifdef CONFIG_MACH_LGE
+		/* LGE_CHANGE, 2013-04-19, G2-FS@lge.com
+		* Adding Print, Requested by QMC-CASE-01158823
+		*/
+		if (err) {
+		pr_err("%s: %s: fail during compare, err = 0x%x\n", mmc_hostname(card->host), __func__, err);
+		err = -EINVAL;
+		}
+	#else
 	if (err)
 		err = -EINVAL;
+	#endif
 
 out:
 	mmc_free_ext_csd(bw_ext_csd);
 	return err;
 }
-
+#if defined(CONFIG_MACH_MSM8974_G2_OPEN_COM) || defined(CONFIG_MACH_MSM8974_G2_OPT_AU)
+MMC_DEV_ATTR(capacity, "%02x%02x%02x%02x\n", card->ext_csd.raw_sectors[3], card->ext_csd.raw_sectors[2], card->ext_csd.raw_sectors[1], card->ext_csd.raw_sectors[0]);
+#endif
 MMC_DEV_ATTR(cid, "%08x%08x%08x%08x\n", card->raw_cid[0], card->raw_cid[1],
 	card->raw_cid[2], card->raw_cid[3]);
 MMC_DEV_ATTR(csd, "%08x%08x%08x%08x\n", card->raw_csd[0], card->raw_csd[1],
@@ -691,6 +722,9 @@ MMC_DEV_ATTR(raw_rpmb_size_mult, "%#x\n", card->ext_csd.raw_rpmb_size_mult);
 MMC_DEV_ATTR(rel_sectors, "%#x\n", card->ext_csd.rel_sectors);
 
 static struct attribute *mmc_std_attrs[] = {
+#if defined(CONFIG_MACH_MSM8974_G2_OPEN_COM) || defined(CONFIG_MACH_MSM8974_G2_OPT_AU)
+	&dev_attr_capacity.attr,
+#endif
 	&dev_attr_cid.attr,
 	&dev_attr_csd.attr,
 	&dev_attr_date.attr,
@@ -784,8 +818,15 @@ static int mmc_select_powerclass(struct mmc_card *card,
 				EXT_CSD_PWR_CL_200_360;
 		break;
 	default:
+		#ifdef CONFIG_MACH_LGE
+		/* LGE_CHANGE, 2013-04-19, G2-FS@lge.com
+		* Adding Print, Requested by QMC-CASE-01158823
+		*/
+		pr_err("%s: %s: Voltage range not supported for power class, host->ios.vdd = 0x%x\n", mmc_hostname(host), __func__, host->ios.vdd);
+		#else
 		pr_warning("%s: Voltage range not supported "
 			   "for power class.\n", mmc_hostname(host));
+		#endif
 		return -EINVAL;
 	}
 
@@ -1159,8 +1200,22 @@ static int mmc_select_hs400(struct mmc_card *card, u8 *ext_csd)
 	}
 
 	/* Switch to HS400 mode if bus width set successfully */
+	#ifdef CONFIG_MACH_LGE
+	/* LGE_CHANGE
+	 * As recommendation of Toshiba, we use 0x4 for Driver Strength in case of Toshiba eMMC.
+	 * 2014.03.17, B2-BSP-FS@lge.com
+	*/
+	if (card->cid.manfid == 17) {
+		err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
+				EXT_CSD_HS_TIMING, 67, 0);
+	} else {
+		err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
+				EXT_CSD_HS_TIMING, 3, 0);
+	}
+	#else
 	err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
 				 EXT_CSD_HS_TIMING, 3, 0);
+	#endif
 	if (err && err != -EBADMSG) {
 		pr_err("%s: Setting HS_TIMING to HS400 failed (err:%d)\n",
 			mmc_hostname(host), err);
@@ -1291,7 +1346,10 @@ static int mmc_reboot_notify(struct notifier_block *notify_block,
 	struct mmc_card *card = container_of(
 			notify_block, struct mmc_card, reboot_notify);
 
-	card->pon_type = (event != SYS_RESTART) ? MMC_LONG_PON : MMC_SHRT_PON;
+	if (event != SYS_RESTART)
+		card->issue_long_pon = true;
+	else
+		card->issue_long_pon = false;
 
 	return NOTIFY_OK;
 }
@@ -1428,9 +1486,15 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 		err = mmc_decode_csd(card);
 		if (err)
 			goto free_card;
+#ifndef CONFIG_MACH_LGE
+		/* LGE_CHANGE
+		 *  ext_csd.rev value are required while decoding cid.year, so move down.
+		 *  2014-03-07, B2-BSP-FS@lge.com
+		 */
 		err = mmc_decode_cid(card);
 		if (err)
 			goto free_card;
+#endif
 	}
 
 	/*
@@ -1454,6 +1518,15 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 		err = mmc_read_ext_csd(card, ext_csd);
 		if (err)
 			goto free_card;
+#ifdef CONFIG_MACH_LGE
+		/* LGE_CHANGE
+		 * decode cid here.
+		 * 2014-03-07, B2-BSP-FS@lge.com
+		 */
+		err = mmc_decode_cid(card);
+		if (err)
+			goto free_card;
+#endif
 
 		/* If doing byte addressing, check if required to do sector
 		 * addressing.  Handle the case of <2GB cards needing sector
@@ -1589,6 +1662,11 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 			card->ext_csd.cache_ctrl = 1;
 		}
 	}
+	if (card->quirks & MMC_QUIRK_CACHE_DISABLE) {
+		pr_warn("%s: This is Hynix card, cache disabled!\n",
+				mmc_hostname(card->host));
+		card->ext_csd.cache_ctrl = 0;
+	}
 
 	if ((host->caps2 & MMC_CAP2_PACKED_WR &&
 			card->ext_csd.max_packed_writes > 0) ||
@@ -1687,24 +1765,19 @@ static int mmc_poweroff_notify(struct mmc_card *card, unsigned int notify_type)
 	return err;
 }
 
-int mmc_send_pon(struct mmc_card *card)
+int mmc_send_long_pon(struct mmc_card *card)
 {
 	int err = 0;
 	struct mmc_host *host = card->host;
 
-	if (!mmc_can_poweroff_notify(card))
-		goto out;
-
 	mmc_claim_host(host);
-	if (card->pon_type & MMC_LONG_PON)
+	if (card->issue_long_pon && mmc_can_poweroff_notify(card)) {
 		err = mmc_poweroff_notify(host->card, EXT_CSD_POWER_OFF_LONG);
-	else if (card->pon_type & MMC_SHRT_PON)
-		err = mmc_poweroff_notify(host->card, EXT_CSD_POWER_OFF_SHORT);
-	if (err)
-		pr_warn("%s: error %d sending PON type %u",
-			mmc_hostname(host), err, card->pon_type);
+		if (err)
+			pr_warning("%s: error %d sending Long PON",
+					mmc_hostname(host), err);
+	}
 	mmc_release_host(host);
-out:
 	return err;
 }
 
