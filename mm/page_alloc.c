@@ -12,10 +12,6 @@
  *  Zone balancing, Kanoj Sarcar, SGI, Jan 2000
  *  Per cpu hot/cold page lists, bulk allocation, Martin J. Bligh, Sept 2002
  *          (lots of bits borrowed from Ingo Molnar & Andrew Morton)
- *
- *  NOTE: This file has been modified by Sony Mobile Communications Inc.
- *  Modifications are Copyright (c) 2013 Sony Mobile Communications Inc,
- *  and licensed under the license of the file.
  */
 
 #include <linux/stddef.h>
@@ -792,7 +788,14 @@ bool is_cma_pageblock(struct page *page)
 {
 	return get_pageblock_migratetype(page) == MIGRATE_CMA;
 }
+
+#ifdef CONFIG_MACH_LGE
+/* LGE_UPDATE, 2013/11/18, G2-KK-FS@lge.com
+ * add the EXPORT_SYMBOL(is_cma_pageblock) because build is failed by tuxera exFAT
+ * this code is tuxera guide.
+ */
 EXPORT_SYMBOL(is_cma_pageblock);
+#endif
 
 /* Free whole pageblock and set it's migration type to MIGRATE_CMA. */
 void __init init_cma_reserved_pageblock(struct page *page)
@@ -2066,7 +2069,6 @@ void warn_alloc_failed(gfp_t gfp_mask, int order, const char *fmt, ...)
 	pr_warn("%s: page allocation failure: order:%d, mode:0x%x\n",
 		current->comm, order, gfp_mask);
 
-	trace_mm_page_alloc_fail(order);
 	dump_stack();
 	if (!should_suppress_show_mem())
 		show_mem(filter);
@@ -2641,9 +2643,6 @@ retry_cpuset:
 				preferred_zone, migratetype);
 
 	trace_mm_page_alloc(page, order, gfp_mask, migratetype);
-	if (order > 1)
-		trace_mm_page_alloc_highorder(page, order,
-					      gfp_mask, migratetype);
 
 out:
 	/*
@@ -5367,11 +5366,11 @@ int __meminit init_per_zone_wmark_min(void)
 module_init(init_per_zone_wmark_min)
 
 /*
- * min_free_kbytes_sysctl_handler - just a wrapper around proc_dointvec() so
+ * min_free_kbytes_sysctl_handler - just a wrapper around proc_dointvec() so 
  *	that we can call two helper functions whenever min_free_kbytes
  *	or extra_free_kbytes changes.
  */
-int min_free_kbytes_sysctl_handler(ctl_table *table, int write,
+int min_free_kbytes_sysctl_handler(ctl_table *table, int write, 
 	void __user *buffer, size_t *length, loff_t *ppos)
 {
 	proc_dointvec(table, write, buffer, length, ppos);
